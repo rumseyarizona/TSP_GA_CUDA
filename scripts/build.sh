@@ -18,7 +18,7 @@ else
 	module load cuda11/11.0
 fi
 
-echo "=== Building Traveling-salesman-GPU ==="
+echo "=== Building TSP-GA-CUDA ==="
 echo "PWD: $(pwd)"
 which nvcc || true
 nvcc --version || true
@@ -32,10 +32,10 @@ fi
 if [[ -n "$HOST_CC" ]]; then
 	echo "Using host C compiler: $HOST_CC"
 	make clean CC="$HOST_CC"
-	make -j4 CC="$HOST_CC"
+	make -j4 all_cuda_versions CC="$HOST_CC"
 else
 	make clean
-	make -j4
+	make -j4 all_cuda_versions
 fi
 
 echo "=== Build complete ==="

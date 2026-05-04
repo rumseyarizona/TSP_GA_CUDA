@@ -11,12 +11,8 @@
 #include <string>
 #include <vector>
 
-// P100-friendly first pass:
-// - one CUDA block is one isolated GA island
-// - each island stores two populations in shared memory
-// - the full edge-weight matrix lives in constant memory
-// Variant:
-// - sort island fitness order cooperatively with a 32-thread bitonic sort
+//This variant changes what was previously a single thread sorting of the fitness results to a cooperative 32 element bitonic sort in each warp.
+
 constexpr int MAX_CITIES = 128;
 constexpr int BLOCK_POP_SIZE = 32;
 constexpr int TOURNAMENT_SIZE = 3;

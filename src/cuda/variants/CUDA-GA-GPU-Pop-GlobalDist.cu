@@ -11,12 +11,9 @@
 #include <string>
 #include <vector>
 
-// P100-friendly first pass:
-// - one CUDA block is one isolated GA island
-// - each island stores two populations in global memory
-// - the full edge-weight matrix lives in global memory
-// Variant:
-// - supports larger instances than constant memory/shared-population variants
+//This version implements a reverse optimization, placing the distance matrix and the population members all in global memory.
+//This does open a larger city count, at the cost of substantially worse performance on smaller cases.
+
 constexpr int MAX_CITIES = 1024;
 constexpr int BLOCK_POP_SIZE = 32;
 constexpr int TOURNAMENT_SIZE = 3;

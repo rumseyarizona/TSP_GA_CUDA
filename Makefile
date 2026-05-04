@@ -1,5 +1,5 @@
-# Minimal HPC-ready Makefile for Traveling-salesman-GPU
-# Builds sequential + CUDA binaries into build/
+# Minimal HPC-ready Makefile for TSP-GA-CUDA
+# Builds the retained CUDA binaries into build/
 
 CC ?= gcc
 NVCC ?= nvcc
@@ -13,95 +13,49 @@ endif
 
 BUILD_DIR := build
 
-# Standard CUDA matrix sweep config used by the CSV Slurm runner.
 SBATCH ?= sbatch
 CUDA_MATRIX_RUNS ?= 20
 CUDA_MATRIX_ISLANDS ?= 256
 CUDA_MATRIX_GENERATIONS ?= 2000
 CUDA_MATRIX_MUTATION ?= 0.03
 CUDA_MATRIX_ELITE_POP ?= 2
-CUDA_MATRIX_ELITE_HYBRID ?= 4
-CUDA_MATRIX_POP_HYBRID ?= 512
 CUDA_MATRIX_SEED_BASE ?= 100
-CUDA_MATRIX_SMOKE_DATASET ?= sequential/tests/fixtures/smoke_20.tsp
 CUDA_MATRIX_BERLIN_DATASET ?= data/berlin52.tsp
 
-# Verified file layout in this repository
-SEQ_MAIN   := sequential/src/main.c
-SEQ_SRCS   := \
-	sequential/src/instance.c \
-	sequential/src/tour.c \
-	sequential/src/fitness.c \
-	sequential/src/rng.c \
-	sequential/src/init.c \
-	sequential/src/selection.c \
-	sequential/src/crossover.c \
-	sequential/src/elitism.c \
-	sequential/src/replacement.c \
-	sequential/src/mutation.c \
-	sequential/src/ga_stats.c \
-	sequential/src/ga_driver.c
-
-NAIVE_SRC  := src/cuda/GPU-Naive.cu
-HYBRID_SRC := src/cuda/CUDA-GA.cu
-HYBRID_NO_GREEDY_SRC := src/cuda/CUDA-GA-no-greedy.cu
+NAIVE_SRC := src/cuda/GPU-Naive.cu
 ISLAND_SRC := src/cuda/CUDA-GA-GPU-Pop.cu
 ISLAND_BANKCONFLICT_SRC := src/cuda/variants/CUDA-GA-GPU-Pop-bankconflict.cu
 ISLAND_BITSET_SRC := src/cuda/variants/CUDA-GA-GPU-Pop-bitset.cu
 ISLAND_PARALLEL_SORT_SRC := src/cuda/variants/CUDA-GA-GPU-Pop-ParallelSort.cu
 ISLAND_AOS_SRC := src/cuda/variants/CUDA-GA-GPU-Pop-AoS.cu
 ISLAND_GLOBAL_DIST_SRC := src/cuda/variants/CUDA-GA-GPU-Pop-GlobalDist.cu
-ISLAND_VERBOSE_COMMENTS_SRC := src/cuda/variants/CUDA-GA-GPU-Pop-VerboseComments.cu
-B1_STRIDE_SRC := src/cuda/variants/CUDA-GA-B1-stride.cu
-B2_BITMASK_SRC := src/cuda/variants/CUDA-GA-B2-bitmask.cu
-B3_REDUCE_SRC := src/cuda/variants/CUDA-GA-B3-reduce.cu
-B3_SHUFFLE_SRC := src/cuda/variants/CUDA-GA-B3-shuffle.cu
-B4_GLOBAL_SRC := src/cuda/variants/CUDA-GA-B4-global.cu
-B4_SMEM_SRC := src/cuda/variants/CUDA-GA-B4-smem.cu
-B5_BIGPOP_SRC := src/cuda/variants/CUDA-GA-B5-bigpop.cu
-C1_STRIDE_SRC := optimizations/C1/CUDA-GA-C1-stride.cu
-C2_BITMASK_SRC := optimizations/C2/CUDA-GA-C2-bitmask.cu
-C3_REDUCE_SRC := optimizations/C3/CUDA-GA-C3-reduce.cu
-C4_GLOBAL_SRC := optimizations/C4/CUDA-GA-C4-global.cu
-C5_BIGPOP_SRC := optimizations/C5/CUDA-GA-C5-bigpop.cu
 PARSER_SRC := src/cpp/tsplib_parser.cpp
 PARSER_HDR := src/cpp/tsplib_parser.h
 
-SEQ_BIN    := $(BUILD_DIR)/Sequential
-NAIVE_BIN  := $(BUILD_DIR)/GPU-Naive
-HYBRID_BIN := $(BUILD_DIR)/CUDA-GA
-HYBRID_NO_GREEDY_BIN := $(BUILD_DIR)/CUDA-GA-no-greedy
+NAIVE_BIN := $(BUILD_DIR)/GPU-Naive
 ISLAND_BIN := $(BUILD_DIR)/CUDA-GA-GPU-Pop
 ISLAND_BANKCONFLICT_BIN := $(BUILD_DIR)/CUDA-GA-GPU-Pop-bankconflict
 ISLAND_BITSET_BIN := $(BUILD_DIR)/CUDA-GA-GPU-Pop-bitset
 ISLAND_PARALLEL_SORT_BIN := $(BUILD_DIR)/GA-GPU-POP-ParallelSort
 ISLAND_AOS_BIN := $(BUILD_DIR)/GA-GPU-POP-AoS
 ISLAND_GLOBAL_DIST_BIN := $(BUILD_DIR)/GA-GPU-POP-GlobalDist
-ISLAND_VERBOSE_COMMENTS_BIN := $(BUILD_DIR)/GA-GPU-POP-VerboseComments
-B1_STRIDE_BIN := $(BUILD_DIR)/CUDA-GA-B1-stride
-B2_BITMASK_BIN := $(BUILD_DIR)/CUDA-GA-B2-bitmask
-B3_REDUCE_BIN := $(BUILD_DIR)/CUDA-GA-B3-reduce
-B3_SHUFFLE_BIN := $(BUILD_DIR)/CUDA-GA-B3-shuffle
-B4_GLOBAL_BIN := $(BUILD_DIR)/CUDA-GA-B4-global
-B4_SMEM_BIN := $(BUILD_DIR)/CUDA-GA-B4-smem
-B5_BIGPOP_BIN := $(BUILD_DIR)/CUDA-GA-B5-bigpop
-C1_STRIDE_BIN := $(BUILD_DIR)/CUDA-GA-C1-stride
-C2_BITMASK_BIN := $(BUILD_DIR)/CUDA-GA-C2-bitmask
-C3_REDUCE_BIN := $(BUILD_DIR)/CUDA-GA-C3-reduce
-C4_GLOBAL_BIN := $(BUILD_DIR)/CUDA-GA-C4-global
-C5_BIGPOP_BIN := $(BUILD_DIR)/CUDA-GA-C5-bigpop
 
-CFLAGS     ?= -O3 -std=c11 -Wall -Wextra -Isequential/include
-# Use C++11 for broad compatibility with older HPC host compilers.
-NVCCFLAGS  ?= -O3 -std=c++11 -Xcompiler -std=gnu++11 -arch=sm_60 -lineinfo -Isrc/cpp
+CUDA_BINS := \
+	$(NAIVE_BIN) \
+	$(ISLAND_BIN) \
+	$(ISLAND_BANKCONFLICT_BIN) \
+	$(ISLAND_BITSET_BIN) \
+	$(ISLAND_PARALLEL_SORT_BIN) \
+	$(ISLAND_AOS_BIN) \
+	$(ISLAND_GLOBAL_DIST_BIN)
 
-LDLIBS_SEQ := -lm
+NVCCFLAGS ?= -O3 -std=c++11 -Xcompiler -std=gnu++11 -arch=sm_60 -lineinfo -Isrc/cpp
 
-.PHONY: all all_cuda_versions clean dirs info sbatch_cuda_smoke20 sbatch_cuda_berlin52 print_cuda_matrix_config refresh_readme_cuda_results
+.PHONY: all all_cuda_versions clean dirs info sbatch_cuda_berlin52 print_cuda_matrix_config
 
-all: dirs $(SEQ_BIN) $(NAIVE_BIN) $(HYBRID_BIN) $(HYBRID_NO_GREEDY_BIN) $(ISLAND_BIN) $(ISLAND_BANKCONFLICT_BIN) $(ISLAND_BITSET_BIN) $(ISLAND_PARALLEL_SORT_BIN) $(ISLAND_AOS_BIN) $(ISLAND_GLOBAL_DIST_BIN) $(ISLAND_VERBOSE_COMMENTS_BIN) $(B1_STRIDE_BIN) $(B2_BITMASK_BIN) $(B3_REDUCE_BIN) $(B3_SHUFFLE_BIN) $(B4_GLOBAL_BIN) $(B4_SMEM_BIN) $(B5_BIGPOP_BIN) $(C1_STRIDE_BIN) $(C2_BITMASK_BIN) $(C3_REDUCE_BIN) $(C4_GLOBAL_BIN) $(C5_BIGPOP_BIN)
+all: all_cuda_versions
 
-all_cuda_versions: dirs $(NAIVE_BIN) $(HYBRID_BIN) $(HYBRID_NO_GREEDY_BIN) $(ISLAND_BIN) $(ISLAND_BANKCONFLICT_BIN) $(ISLAND_BITSET_BIN) $(ISLAND_PARALLEL_SORT_BIN) $(ISLAND_AOS_BIN) $(ISLAND_GLOBAL_DIST_BIN) $(ISLAND_VERBOSE_COMMENTS_BIN) $(B1_STRIDE_BIN) $(B2_BITMASK_BIN) $(B3_REDUCE_BIN) $(B3_SHUFFLE_BIN) $(B4_GLOBAL_BIN) $(B4_SMEM_BIN) $(B5_BIGPOP_BIN) $(C1_STRIDE_BIN) $(C2_BITMASK_BIN) $(C3_REDUCE_BIN) $(C4_GLOBAL_BIN) $(C5_BIGPOP_BIN)
+all_cuda_versions: dirs $(CUDA_BINS)
 
 dirs:
 	mkdir -p $(BUILD_DIR)
@@ -111,29 +65,13 @@ info:
 	@echo "NVCC=$(NVCC_CMD)"
 	@echo "CUDA_HOME=$(CUDA_HOME)"
 	@echo "BUILD_DIR=$(BUILD_DIR)"
-	@echo "SEQ_MAIN=$(SEQ_MAIN)"
 	@echo "NAIVE_SRC=$(NAIVE_SRC)"
-	@echo "HYBRID_SRC=$(HYBRID_SRC)"
-	@echo "HYBRID_NO_GREEDY_SRC=$(HYBRID_NO_GREEDY_SRC)"
 	@echo "ISLAND_SRC=$(ISLAND_SRC)"
 	@echo "ISLAND_BANKCONFLICT_SRC=$(ISLAND_BANKCONFLICT_SRC)"
 	@echo "ISLAND_BITSET_SRC=$(ISLAND_BITSET_SRC)"
 	@echo "ISLAND_PARALLEL_SORT_SRC=$(ISLAND_PARALLEL_SORT_SRC)"
 	@echo "ISLAND_AOS_SRC=$(ISLAND_AOS_SRC)"
 	@echo "ISLAND_GLOBAL_DIST_SRC=$(ISLAND_GLOBAL_DIST_SRC)"
-	@echo "ISLAND_VERBOSE_COMMENTS_SRC=$(ISLAND_VERBOSE_COMMENTS_SRC)"
-	@echo "B1_STRIDE_SRC=$(B1_STRIDE_SRC)"
-	@echo "B2_BITMASK_SRC=$(B2_BITMASK_SRC)"
-	@echo "B3_REDUCE_SRC=$(B3_REDUCE_SRC)"
-	@echo "B3_SHUFFLE_SRC=$(B3_SHUFFLE_SRC)"
-	@echo "B4_GLOBAL_SRC=$(B4_GLOBAL_SRC)"
-	@echo "B4_SMEM_SRC=$(B4_SMEM_SRC)"
-	@echo "B5_BIGPOP_SRC=$(B5_BIGPOP_SRC)"
-	@echo "C1_STRIDE_SRC=$(C1_STRIDE_SRC)"
-	@echo "C2_BITMASK_SRC=$(C2_BITMASK_SRC)"
-	@echo "C3_REDUCE_SRC=$(C3_REDUCE_SRC)"
-	@echo "C4_GLOBAL_SRC=$(C4_GLOBAL_SRC)"
-	@echo "C5_BIGPOP_SRC=$(C5_BIGPOP_SRC)"
 	@echo "PARSER_SRC=$(PARSER_SRC)"
 
 print_cuda_matrix_config:
@@ -142,32 +80,14 @@ print_cuda_matrix_config:
 	@echo "GENERATIONS=$(CUDA_MATRIX_GENERATIONS)"
 	@echo "MUTATION=$(CUDA_MATRIX_MUTATION)"
 	@echo "ELITE_POP=$(CUDA_MATRIX_ELITE_POP)"
-	@echo "ELITE_HYBRID=$(CUDA_MATRIX_ELITE_HYBRID)"
-	@echo "POP_HYBRID=$(CUDA_MATRIX_POP_HYBRID)"
 	@echo "SEED_BASE=$(CUDA_MATRIX_SEED_BASE)"
-	@echo "SMOKE_DATASET=$(CUDA_MATRIX_SMOKE_DATASET)"
 	@echo "BERLIN_DATASET=$(CUDA_MATRIX_BERLIN_DATASET)"
 
-sbatch_cuda_smoke20:
-	$(SBATCH) --export=ALL,DATASET=$(CUDA_MATRIX_SMOKE_DATASET),RUNS=$(CUDA_MATRIX_RUNS),ISLANDS=$(CUDA_MATRIX_ISLANDS),GENERATIONS=$(CUDA_MATRIX_GENERATIONS),MUTATION=$(CUDA_MATRIX_MUTATION),ELITE_POP=$(CUDA_MATRIX_ELITE_POP),ELITE_HYBRID=$(CUDA_MATRIX_ELITE_HYBRID),POP_HYBRID=$(CUDA_MATRIX_POP_HYBRID),SEED_BASE=$(CUDA_MATRIX_SEED_BASE) slurm/run_cuda_all_variants_csv.slurm
-
 sbatch_cuda_berlin52:
-	$(SBATCH) --export=ALL,DATASET=$(CUDA_MATRIX_BERLIN_DATASET),RUNS=$(CUDA_MATRIX_RUNS),ISLANDS=$(CUDA_MATRIX_ISLANDS),GENERATIONS=$(CUDA_MATRIX_GENERATIONS),MUTATION=$(CUDA_MATRIX_MUTATION),ELITE_POP=$(CUDA_MATRIX_ELITE_POP),ELITE_HYBRID=$(CUDA_MATRIX_ELITE_HYBRID),POP_HYBRID=$(CUDA_MATRIX_POP_HYBRID),SEED_BASE=$(CUDA_MATRIX_SEED_BASE) slurm/run_cuda_all_variants_csv.slurm
-
-refresh_readme_cuda_results:
-	python scripts/generate_cuda_results_readme.py
-
-$(SEQ_BIN): $(SEQ_MAIN) $(SEQ_SRCS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS_SEQ)
+	$(SBATCH) --export=ALL,DATASET=$(CUDA_MATRIX_BERLIN_DATASET),RUNS=$(CUDA_MATRIX_RUNS),ISLANDS=$(CUDA_MATRIX_ISLANDS),GENERATIONS=$(CUDA_MATRIX_GENERATIONS),MUTATION=$(CUDA_MATRIX_MUTATION),ELITE_POP=$(CUDA_MATRIX_ELITE_POP),SEED_BASE=$(CUDA_MATRIX_SEED_BASE) slurm/run_cuda_all_variants_csv.slurm
 
 $(NAIVE_BIN): $(NAIVE_SRC) $(PARSER_SRC) $(PARSER_HDR)
 	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(NAIVE_SRC) $(PARSER_SRC)
-
-$(HYBRID_BIN): $(HYBRID_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(HYBRID_SRC) $(PARSER_SRC)
-
-$(HYBRID_NO_GREEDY_BIN): $(HYBRID_NO_GREEDY_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(HYBRID_NO_GREEDY_SRC) $(PARSER_SRC)
 
 $(ISLAND_BIN): $(ISLAND_SRC) $(PARSER_SRC) $(PARSER_HDR)
 	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(ISLAND_SRC) $(PARSER_SRC)
@@ -186,45 +106,6 @@ $(ISLAND_AOS_BIN): $(ISLAND_AOS_SRC) $(PARSER_SRC) $(PARSER_HDR)
 
 $(ISLAND_GLOBAL_DIST_BIN): $(ISLAND_GLOBAL_DIST_SRC) $(PARSER_SRC) $(PARSER_HDR)
 	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(ISLAND_GLOBAL_DIST_SRC) $(PARSER_SRC)
-
-$(ISLAND_VERBOSE_COMMENTS_BIN): $(ISLAND_VERBOSE_COMMENTS_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(ISLAND_VERBOSE_COMMENTS_SRC) $(PARSER_SRC)
-
-$(B1_STRIDE_BIN): $(B1_STRIDE_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(B1_STRIDE_SRC) $(PARSER_SRC)
-
-$(B2_BITMASK_BIN): $(B2_BITMASK_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(B2_BITMASK_SRC) $(PARSER_SRC)
-
-$(B3_REDUCE_BIN): $(B3_REDUCE_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(B3_REDUCE_SRC) $(PARSER_SRC)
-
-$(B3_SHUFFLE_BIN): $(B3_SHUFFLE_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(B3_SHUFFLE_SRC) $(PARSER_SRC)
-
-$(B4_GLOBAL_BIN): $(B4_GLOBAL_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(B4_GLOBAL_SRC) $(PARSER_SRC)
-
-$(B4_SMEM_BIN): $(B4_SMEM_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(B4_SMEM_SRC) $(PARSER_SRC)
-
-$(B5_BIGPOP_BIN): $(B5_BIGPOP_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(B5_BIGPOP_SRC) $(PARSER_SRC)
-
-$(C1_STRIDE_BIN): $(C1_STRIDE_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(C1_STRIDE_SRC) $(PARSER_SRC)
-
-$(C2_BITMASK_BIN): $(C2_BITMASK_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(C2_BITMASK_SRC) $(PARSER_SRC)
-
-$(C3_REDUCE_BIN): $(C3_REDUCE_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(C3_REDUCE_SRC) $(PARSER_SRC)
-
-$(C4_GLOBAL_BIN): $(C4_GLOBAL_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(C4_GLOBAL_SRC) $(PARSER_SRC)
-
-$(C5_BIGPOP_BIN): $(C5_BIGPOP_SRC) $(PARSER_SRC) $(PARSER_HDR)
-	$(NVCC_CMD) $(NVCCFLAGS) -o $@ $(C5_BIGPOP_SRC) $(PARSER_SRC)
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <vector>
 
+//A small sequential C version testing that the TSPLib was parsed correctly
+
 //This cpp implements a greedy closest edge algorithm for testing the tsplib parsing as below
 struct TourResult {
     std::vector<int> tour;

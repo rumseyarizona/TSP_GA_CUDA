@@ -1,13 +1,8 @@
 #!/bin/bash
-# Runs all current CUDA variants multiple times and writes per-run and average CSVs.
+# Runs the retained CUDA variants multiple times and writes per-run and average CSVs.
 #
 # Usage:
-#   sbatch --export=ALL,DATASET=sequential/tests/fixtures/smoke_20.tsp,RUNS=10 slurm/run_cuda_all_variants_csv.slurm
-#
-# Notes:
-# - Each run uses `seed = SEED_BASE + run_index - 1` so stochastic quality can be compared.
-# - CUDA timing is parsed from program output when available.
-# - Assumes `make all_cuda_versions` can build the CUDA binaries from the repo root.
+#   sbatch --export=ALL,DATASET=data/berlin52.tsp,RUNS=10 slurm/run_cuda_all_variants_csv.slurm
 
 #SBATCH --job-name=tsp_cuda_csv
 #SBATCH --account=ece569
@@ -38,15 +33,13 @@ if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/Makefile" ]; then
 fi
 cd "$REPO_DIR"
 
-DATASET="${DATASET:-sequential/tests/fixtures/smoke_20.tsp}"
+DATASET="${DATASET:-data/berlin52.tsp}"
 RUNS="${RUNS:-20}"
 ISLANDS="${ISLANDS:-256}"
 GENERATIONS="${GENERATIONS:-2000}"
 MUTATION="${MUTATION:-0.03}"
 ELITE_POP="${ELITE_POP:-2}"
-ELITE_HYBRID="${ELITE_HYBRID:-4}"
 SEED_BASE="${SEED_BASE:-100}"
-POP_HYBRID="${POP_HYBRID:-512}"
 
 if [ ! -f "$DATASET" ]; then
   echo "Error: dataset '$DATASET' not found from repo root: $REPO_DIR"
@@ -64,27 +57,12 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 echo "variant,binary,version,dataset,run_index,seed,population,islands,generations,mutation_rate,elite_count,reported_length,cuda_elapsed_ms,generations_completed,target_reached,best_tour_path,status,notes" > "$RUN_CSV"
 
-get_dimension() {
-  awk -F: '
-    /^[[:space:]]*DIMENSION[[:space:]]*:/ {
-      gsub(/[[:space:]]/, "", $2);
-      print $2;
-      exit
-    }
-  ' "$1"
-}
-
-DATASET_DIM="$(get_dimension "$DATASET")"
-if [ -z "$DATASET_DIM" ]; then
-  DATASET_DIM="unknown"
-fi
-
 build_cuda_variants() {
   local attempt=1
   local max_attempts=2
 
   while [ "$attempt" -le "$max_attempts" ]; do
-    echo "Building CUDA variants with make all_cuda_versions (attempt ${attempt}/${max_attempts})..."
+    echo "Building retained CUDA variants with make all_cuda_versions (attempt ${attempt}/${max_attempts})..."
     if make all_cuda_versions; then
       return 0
     fi
@@ -104,31 +82,13 @@ build_cuda_variants() {
 verify_required_binaries() {
   local required=(
     build/GPU-Naive
-    build/CUDA-GA
-    build/CUDA-GA-no-greedy
     build/CUDA-GA-GPU-Pop
     build/CUDA-GA-GPU-Pop-bankconflict
     build/CUDA-GA-GPU-Pop-bitset
     build/GA-GPU-POP-ParallelSort
     build/GA-GPU-POP-AoS
     build/GA-GPU-POP-GlobalDist
-    build/GA-GPU-POP-VerboseComments
-    build/CUDA-GA-B1-stride
-    build/CUDA-GA-B2-bitmask
-    build/CUDA-GA-B3-reduce
-    build/CUDA-GA-B3-shuffle
-    build/CUDA-GA-B4-global
-    build/CUDA-GA-B5-bigpop
-    build/CUDA-GA-C1-stride
-    build/CUDA-GA-C2-bitmask
-    build/CUDA-GA-C3-reduce
-    build/CUDA-GA-C4-global
-    build/CUDA-GA-C5-bigpop
   )
-
-  if [ "$DATASET_DIM" != "unknown" ] && [ "$DATASET_DIM" -le 99 ]; then
-    required+=(build/CUDA-GA-B4-smem)
-  fi
 
   local missing=0
   local binary
@@ -229,17 +189,7 @@ run_and_record() {
   echo "${variant},${binary},${version},${DATASET},${run_index},${seed},${population},${islands},${generations},${mutation},${elite},${length},${elapsed_ms},${generations_completed},${target_reached},${best_tour_path},${status},${notes}" >> "$RUN_CSV"
 }
 
-# Always invoke the build step. Make's own dependency tracking rebuilds only
-# targets whose .cu source is newer than the cached binary, so this is cheap
-# when nothing changed.
-#
-# We deliberately do NOT short-circuit on the existence of any single binary
-# (the previous guard was `if [ ! -x ./build/CUDA-GA-C5-bigpop ]`). That guard
-# caused stale binaries to silently survive source edits: when a print
-# statement (e.g. `CUDA kernel elapsed ms:`) was added to a variant after its
-# binary had been cached, the SLURM sweep kept running the old binary and the
-# stdout-grep extractor produced NA in the resulting CSV.
-echo "Ensuring CUDA variants are up to date..."
+echo "Ensuring retained CUDA variants are up to date..."
 build_cuda_variants
 verify_required_binaries
 
@@ -250,12 +200,6 @@ for run_index in $(seq 1 "$RUNS"); do
 
   run_and_record "gpu_naive" "build/GPU-Naive" "$run_index" "$seed" "NA" "NA" "NA" "NA" "NA" \
     ./build/GPU-Naive "$DATASET"
-
-  run_and_record "cuda_ga" "build/CUDA-GA" "$run_index" "$seed" "$POP_HYBRID" "NA" "$GENERATIONS" "$MUTATION" "$ELITE_HYBRID" \
-    ./build/CUDA-GA "$DATASET" "$POP_HYBRID" "$GENERATIONS" "$MUTATION" "$ELITE_HYBRID" "$seed"
-
-  run_and_record "cuda_ga_no_greedy" "build/CUDA-GA-no-greedy" "$run_index" "$seed" "$POP_HYBRID" "NA" "$GENERATIONS" "$MUTATION" "$ELITE_HYBRID" \
-    ./build/CUDA-GA-no-greedy "$DATASET" "$POP_HYBRID" "$GENERATIONS" "$MUTATION" "$ELITE_HYBRID" "$seed"
 
   run_and_record "cuda_ga_gpu_pop" "build/CUDA-GA-GPU-Pop" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
     ./build/CUDA-GA-GPU-Pop "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
@@ -274,49 +218,6 @@ for run_index in $(seq 1 "$RUNS"); do
 
   run_and_record "cuda_ga_gpu_pop_global_dist" "build/GA-GPU-POP-GlobalDist" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
     ./build/GA-GPU-POP-GlobalDist "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_gpu_pop_verbose_comments" "build/GA-GPU-POP-VerboseComments" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/GA-GPU-POP-VerboseComments "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_b1_stride" "build/CUDA-GA-B1-stride" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-B1-stride "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_b2_bitmask" "build/CUDA-GA-B2-bitmask" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-B2-bitmask "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_b3_reduce" "build/CUDA-GA-B3-reduce" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-B3-reduce "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_b3_shuffle" "build/CUDA-GA-B3-shuffle" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-B3-shuffle "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_b4_global" "build/CUDA-GA-B4-global" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-B4-global "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_b5_bigpop" "build/CUDA-GA-B5-bigpop" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-B5-bigpop "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_c1_stride" "build/CUDA-GA-C1-stride" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-C1-stride "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_c2_bitmask" "build/CUDA-GA-C2-bitmask" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-C2-bitmask "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_c3_reduce" "build/CUDA-GA-C3-reduce" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-C3-reduce "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_c4_global" "build/CUDA-GA-C4-global" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-C4-global "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_c5_bigpop" "build/CUDA-GA-C5-bigpop" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-C5-bigpop "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  if [ "$DATASET_DIM" != "unknown" ] && [ "$DATASET_DIM" -le 99 ]; then
-    run_and_record "cuda_ga_b4_smem" "build/CUDA-GA-B4-smem" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-      ./build/CUDA-GA-B4-smem "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-  else
-    echo "cuda_ga_b4_smem,build/CUDA-GA-B4-smem,cuda_ga_b4_smem,${DATASET},${run_index},${seed},NA,${ISLANDS},${GENERATIONS},${MUTATION},${ELITE_POP},NA,NA,NA,NA,NA,skipped,dataset dimension ${DATASET_DIM} exceeds B4-smem limit 99" >> "$RUN_CSV"
-  fi
 done
 
 awk -F, '

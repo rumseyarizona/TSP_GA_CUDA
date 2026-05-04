@@ -11,6 +11,9 @@
 #include <string>
 #include <vector>
 
+
+// This variant implements a reverse optimization, demonstrating that the AOS contruction for the representation of city does not work well
+
 // P100-friendly first pass:
 // - one CUDA block is one isolated GA island
 // - each island stores two populations in shared memory

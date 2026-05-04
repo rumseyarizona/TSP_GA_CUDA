@@ -11,12 +11,12 @@
 #include <string>
 #include <vector>
 
+//This variant pads the tour row to ensure thatt the worst case bank conflict is avoided.
 // P100-friendly first pass:
 // - one CUDA block is one isolated GA island
 // - each island stores two populations in shared memory
 // - the full edge-weight matrix lives in constant memory
-// Variant 1:
-// - pad each shared-memory tour row to break worst-case bank-conflict strides
+
 constexpr int MAX_CITIES = 128;
 constexpr int BLOCK_POP_SIZE = 32;
 constexpr int TOURNAMENT_SIZE = 3;

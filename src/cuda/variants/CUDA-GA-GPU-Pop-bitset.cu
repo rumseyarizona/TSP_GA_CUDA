@@ -11,12 +11,12 @@
 #include <string>
 #include <vector>
 
+//This version represents the visited cities as a compact 128 bits in 4 words, reducing the memory footprint and access cost associated.
 // P100-friendly first pass:
 // - one CUDA block is one isolated GA island
 // - each island stores two populations in shared memory
 // - the full edge-weight matrix lives in constant memory
-// Variant 2:
-// - replace per-thread used[MAX_CITIES] scratch with a compact bitset
+
 constexpr int MAX_CITIES = 128;
 constexpr int BLOCK_POP_SIZE = 32;
 constexpr int TOURNAMENT_SIZE = 3;

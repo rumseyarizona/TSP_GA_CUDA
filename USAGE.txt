@@ -1,0 +1,76 @@
+TSP-GA-CUDA compact usage
+=========================
+
+Purpose
+-------
+This fork is a compact CUDA-focused version of the Traveling Salesman Problem
+genetic algorithm project. The root build now targets the CUDA implementations
+and optimization variants.
+
+Requirements
+------------
+- GNU Make
+- NVIDIA CUDA toolkit with nvcc
+- GCC or another host compiler compatible with nvcc
+
+Build
+-----
+From the repository root:
+
+    make all
+
+This writes CUDA binaries into:
+
+    build/
+
+The explicit CUDA target is:
+
+    make all_cuda_versions
+
+To clean generated binaries:
+
+    make clean
+
+HPC build helper
+----------------
+On a cluster with environment modules:
+
+    bash scripts/build.sh
+
+The script loads CUDA when available, then calls the root Makefile.
+
+Run examples
+------------
+GPU population GA:
+
+    ./build/CUDA-GA-GPU-Pop data/berlin52.tsp 128 1000 0.05 2 42
+
+Bank-conflict padding variant:
+
+    ./build/CUDA-GA-GPU-Pop-bankconflict data/berlin52.tsp 128 1000 0.05 2 42
+
+Bitset crossover variant:
+
+    ./build/CUDA-GA-GPU-Pop-bitset data/berlin52.tsp 128 1000 0.05 2 42
+
+Parallel-sort variant:
+
+    ./build/GA-GPU-POP-ParallelSort data/berlin52.tsp 128 1000 0.05 2 42
+
+AoS variant:
+
+    ./build/GA-GPU-POP-AoS data/berlin52.tsp 128 1000 0.05 2 42
+
+Global distance variant:
+
+    ./build/GA-GPU-POP-GlobalDist data/berlin52.tsp 128 1000 0.05 2 42
+
+Slurm sweep:
+
+    sbatch --export=ALL,DATASET=data/berlin52.tsp,RUNS=20 slurm/run_cuda_all_variants_csv.slurm
+
+Notes
+-----
+- data/berlin52.tsp is the default small benchmark input.
+- build/ is generated and ignored by Git.
+- slurm/run_cuda_all_variants_csv.slurm is the only retained Slurm entry point.
