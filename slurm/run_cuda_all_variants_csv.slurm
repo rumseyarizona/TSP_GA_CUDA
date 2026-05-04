@@ -1,10 +1,17 @@
 #!/bin/bash
-# Runs the retained CUDA variants multiple times and writes per-run and average CSVs.
+# Runs the currently modified GPU-pop variants against a target tour length,
+# repeats each variant multiple times, and writes both per-run and averaged CSVs.
 #
-# Usage:
-#   sbatch --export=ALL,DATASET=data/berlin52.tsp,RUNS=10 slurm/run_cuda_all_variants_csv.slurm
+# First-use example:
+#   sbatch --export=ALL,DATASET=data/berlin52.tsp,TARGET_LENGTH=7542,RUNS=10 slurm/run_cuda_modified_target_avg.slurm
+#
+# Modified variants covered by this script:
+#   - CUDA-GA-GPU-Pop
+#   - CUDA-GA-GPU-Pop-bankconflict
+#   - CUDA-GA-GPU-Pop-bitset
+#   - GA-GPU-POP-GlobalDist
 
-#SBATCH --job-name=tsp_cuda_csv
+#SBATCH --job-name=tsp_cuda_target_avg
 #SBATCH --account=ece569
 #SBATCH --partition=gpu_standard
 #SBATCH --nodes=1
@@ -12,9 +19,9 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
 #SBATCH --mem=12gb
-#SBATCH --time=02:30:00
-#SBATCH -o run_cuda_all_variants_csv_%j.out
-#SBATCH -e run_cuda_all_variants_csv_%j.error
+#SBATCH --time=02:00:00
+#SBATCH -o run_cuda_modified_target_avg_%j.out
+#SBATCH -e run_cuda_modified_target_avg_%j.error
 
 set -euo pipefail
 
@@ -34,12 +41,13 @@ fi
 cd "$REPO_DIR"
 
 DATASET="${DATASET:-data/berlin52.tsp}"
-RUNS="${RUNS:-20}"
-ISLANDS="${ISLANDS:-256}"
-GENERATIONS="${GENERATIONS:-2000}"
-MUTATION="${MUTATION:-0.03}"
+TARGET_LENGTH="${TARGET_LENGTH:?TARGET_LENGTH must be set, e.g. --export=ALL,DATASET=data/berlin52.tsp,TARGET_LENGTH=7542,RUNS=10}"
+RUNS="${RUNS:-10}"
+ISLANDS="${ISLANDS:-128}"
+GENERATIONS="${GENERATIONS:-1000}"
+MUTATION="${MUTATION:-0.05}"
 ELITE_POP="${ELITE_POP:-2}"
-SEED_BASE="${SEED_BASE:-100}"
+SEED_BASE="${SEED_BASE:-42}"
 
 if [ ! -f "$DATASET" ]; then
   echo "Error: dataset '$DATASET' not found from repo root: $REPO_DIR"
@@ -50,58 +58,24 @@ mkdir -p results build
 
 JOB_TAG="${SLURM_JOB_ID:-manual}"
 DATASET_TAG="$(basename "$DATASET" .tsp)"
-RUN_CSV="results/cuda_all_variants_runs_${DATASET_TAG}_${JOB_TAG}.csv"
-AVG_CSV="results/cuda_all_variants_avg_${DATASET_TAG}_${JOB_TAG}.csv"
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tsp_cuda_csv_${JOB_TAG}_XXXXXX")"
+RUN_CSV="results/cuda_modified_target_runs_${DATASET_TAG}_${JOB_TAG}.csv"
+AVG_CSV="results/cuda_modified_target_avg_${DATASET_TAG}_${JOB_TAG}.csv"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tsp_cuda_target_avg_${JOB_TAG}_XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-echo "variant,binary,version,dataset,run_index,seed,population,islands,generations,mutation_rate,elite_count,reported_length,cuda_elapsed_ms,generations_completed,target_reached,best_tour_path,status,notes" > "$RUN_CSV"
+echo "variant,binary,version,dataset,target_length,run_index,seed,islands,generations_arg,mutation_rate,elite_count,reported_length,cuda_elapsed_ms,generations_completed,target_reached,status,notes" > "$RUN_CSV"
 
-build_cuda_variants() {
-  local attempt=1
-  local max_attempts=2
+compile_variant() {
+  local binary="$1"
+  local source="$2"
 
-  while [ "$attempt" -le "$max_attempts" ]; do
-    echo "Building retained CUDA variants with make all_cuda_versions (attempt ${attempt}/${max_attempts})..."
-    if make all_cuda_versions; then
-      return 0
-    fi
-
-    if [ "$attempt" -lt "$max_attempts" ]; then
-      echo "Build failed; cleaning build directory before retry."
-      rm -rf build
-      mkdir -p build
-    fi
-    attempt=$((attempt + 1))
-  done
-
-  echo "Error: failed to build CUDA variants after ${max_attempts} attempts."
-  return 1
-}
-
-verify_required_binaries() {
-  local required=(
-    build/GPU-Naive
-    build/CUDA-GA-GPU-Pop
-    build/CUDA-GA-GPU-Pop-bankconflict
-    build/CUDA-GA-GPU-Pop-bitset
-    build/GA-GPU-POP-ParallelSort
-    build/GA-GPU-POP-AoS
-    build/GA-GPU-POP-GlobalDist
-  )
-
-  local missing=0
-  local binary
-  for binary in "${required[@]}"; do
-    if [ ! -x "$binary" ]; then
-      echo "Error: missing binary '$binary' after build."
-      missing=1
-    fi
-  done
-
-  if [ "$missing" -ne 0 ]; then
-    return 1
+  if [ -x "$binary" ]; then
+    return 0
   fi
+
+  echo "Building $(basename "$binary") from $source"
+  nvcc -O3 -std=c++11 -Xcompiler -std=gnu++11 -arch=sm_60 -lineinfo \
+    -Isrc/cpp -o "$binary" "$source" src/cpp/tsplib_parser.cpp
 }
 
 run_and_record() {
@@ -109,46 +83,33 @@ run_and_record() {
   local binary="$2"
   local run_index="$3"
   local seed="$4"
-  local population="$5"
-  local islands="$6"
-  local generations="$7"
-  local mutation="$8"
-  local elite="$9"
-  shift 9
-
   local stdout_file="$TMP_DIR/${variant}_run${run_index}.out"
   local rc=0
 
-  "$@" > "$stdout_file" 2>&1 || rc=$?
+  "$binary" "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed" "$TARGET_LENGTH" \
+    > "$stdout_file" 2>&1 || rc=$?
 
   local version=""
   version="$(awk -F': ' '/^VERSION:/ {print $2; exit}' "$stdout_file")"
   if [ -z "$version" ]; then
     version="$variant"
   fi
-  version="$(printf '%s' "$version" | tr ',' ';')"
 
-  local length=""
-  length="$(awk -F': ' '
+  local reported_length=""
+  reported_length="$(awk -F': ' '
     /Best GPU-population GA tour length/ {val=$2}
-    /Best GA tour length/ {val=$2}
     /Best tour length/ {val=$2}
-    /^Tour length:/ {if (val == "") val=$2}
     END {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", val);
       print val
     }
   ' "$stdout_file")"
-  if [ -z "$length" ]; then
-    length="NA"
+  if [ -z "$reported_length" ]; then
+    reported_length="NA"
   fi
 
   local elapsed_ms=""
-  elapsed_ms="$(awk -F': ' '
-    /^CUDA kernel elapsed ms:/ {print $2; exit}
-    /^kernel_ms:/ {print $2; exit}
-    /^total_ms:/ {print $2; exit}
-  ' "$stdout_file")"
+  elapsed_ms="$(awk -F': ' '/^CUDA kernel elapsed ms:/ {print $2; exit}' "$stdout_file")"
   if [ -z "$elapsed_ms" ]; then
     elapsed_ms="NA"
   fi
@@ -156,27 +117,13 @@ run_and_record() {
   local generations_completed=""
   generations_completed="$(awk -F': ' '/^Generations completed:/ {print $2; exit}' "$stdout_file")"
   if [ -z "$generations_completed" ]; then
-    generations_completed="$generations"
+    generations_completed="NA"
   fi
 
   local target_reached=""
   target_reached="$(awk -F': ' '/^Target reached:/ {print $2; exit}' "$stdout_file")"
   if [ -z "$target_reached" ]; then
     target_reached="NA"
-  fi
-
-  local best_tour_path=""
-  best_tour_path="$(awk '
-    found {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0);
-      print $0;
-      exit
-    }
-    /^Best tour \(0-based indices\):$/ { found=1; next }
-    /^Tour \(0-based indices\):$/ { found=1; next }
-  ' "$stdout_file")"
-  if [ -z "$best_tour_path" ]; then
-    best_tour_path="NA"
   fi
 
   local status="ok"
@@ -186,76 +133,53 @@ run_and_record() {
     notes="$(tail -n 1 "$stdout_file" | tr ',' ';' | tr '\r\n' '  ')"
   fi
 
-  echo "${variant},${binary},${version},${DATASET},${run_index},${seed},${population},${islands},${generations},${mutation},${elite},${length},${elapsed_ms},${generations_completed},${target_reached},${best_tour_path},${status},${notes}" >> "$RUN_CSV"
+  echo "${variant},${binary},${version},${DATASET},${TARGET_LENGTH},${run_index},${seed},${ISLANDS},${GENERATIONS},${MUTATION},${ELITE_POP},${reported_length},${elapsed_ms},${generations_completed},${target_reached},${status},${notes}" >> "$RUN_CSV"
 }
 
-echo "Ensuring retained CUDA variants are up to date..."
-build_cuda_variants
-verify_required_binaries
+compile_variant "build/CUDA-GA-GPU-Pop" "src/cuda/CUDA-GA-GPU-Pop.cu"
+compile_variant "build/CUDA-GA-GPU-Pop-bankconflict" "src/cuda/variants/CUDA-GA-GPU-Pop-bankconflict.cu"
+compile_variant "build/CUDA-GA-GPU-Pop-bitset" "src/cuda/variants/CUDA-GA-GPU-Pop-bitset.cu"
+compile_variant "build/GA-GPU-POP-GlobalDist" "src/cuda/variants/CUDA-GA-GPU-Pop-GlobalDist.cu"
 
 for run_index in $(seq 1 "$RUNS"); do
   seed=$((SEED_BASE + run_index - 1))
-
   echo "Run ${run_index}/${RUNS} with seed ${seed}"
 
-  run_and_record "gpu_naive" "build/GPU-Naive" "$run_index" "$seed" "NA" "NA" "NA" "NA" "NA" \
-    ./build/GPU-Naive "$DATASET"
-
-  run_and_record "cuda_ga_gpu_pop" "build/CUDA-GA-GPU-Pop" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-GPU-Pop "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_gpu_pop_bankconflict" "build/CUDA-GA-GPU-Pop-bankconflict" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-GPU-Pop-bankconflict "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_gpu_pop_bitset" "build/CUDA-GA-GPU-Pop-bitset" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/CUDA-GA-GPU-Pop-bitset "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_gpu_pop_parallel_sort" "build/GA-GPU-POP-ParallelSort" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/GA-GPU-POP-ParallelSort "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_gpu_pop_aos" "build/GA-GPU-POP-AoS" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/GA-GPU-POP-AoS "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
-
-  run_and_record "cuda_ga_gpu_pop_global_dist" "build/GA-GPU-POP-GlobalDist" "$run_index" "$seed" "NA" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" \
-    ./build/GA-GPU-POP-GlobalDist "$DATASET" "$ISLANDS" "$GENERATIONS" "$MUTATION" "$ELITE_POP" "$seed"
+  run_and_record "cuda_ga_gpu_pop" "./build/CUDA-GA-GPU-Pop" "$run_index" "$seed"
+  run_and_record "cuda_ga_gpu_pop_bankconflict" "./build/CUDA-GA-GPU-Pop-bankconflict" "$run_index" "$seed"
+  run_and_record "cuda_ga_gpu_pop_bitset" "./build/CUDA-GA-GPU-Pop-bitset" "$run_index" "$seed"
+  run_and_record "cuda_ga_gpu_pop_global_dist" "./build/GA-GPU-POP-GlobalDist" "$run_index" "$seed"
 done
 
 awk -F, '
 BEGIN {
   OFS=",";
-  print "variant,version,dataset,runs,ok_runs,target_hits,best_reported_length,best_cuda_elapsed_ms,best_tour_path,mean_reported_length,stddev_reported_length,mean_cuda_elapsed_ms,stddev_cuda_elapsed_ms,mean_generations_completed";
+  print "variant,version,dataset,target_length,runs,ok_runs,target_hits,mean_reported_length,mean_cuda_elapsed_ms,mean_generations_completed";
 }
 NR == 1 { next }
 {
   variant = $1;
   version[variant] = $3;
   dataset[variant] = $4;
+  target[variant] = $5;
   runs[variant]++;
 
-  if ($17 == "ok") {
+  if ($16 == "ok") {
     ok[variant]++;
-    if ($15 == "yes") {
-      hit_count[variant]++;
-    }
     if ($12 != "NA") {
-      current_len = $12 + 0;
-      if (!(variant in best_len) || current_len < best_len[variant]) {
-        best_len[variant] = current_len;
-        best_time[variant] = $13;
-        best_tour[variant] = $16;
-      }
       len_sum[variant] += $12;
-      len_sq_sum[variant] += ($12 * $12);
       len_count[variant]++;
     }
     if ($13 != "NA") {
       time_sum[variant] += $13;
-      time_sq_sum[variant] += ($13 * $13);
       time_count[variant]++;
     }
     if ($14 != "NA") {
       gen_sum[variant] += $14;
       gen_count[variant]++;
+    }
+    if ($15 == "yes") {
+      hit_count[variant]++;
     }
   }
 }
@@ -264,28 +188,7 @@ END {
     mean_len = (len_count[variant] > 0) ? len_sum[variant] / len_count[variant] : "NA";
     mean_time = (time_count[variant] > 0) ? time_sum[variant] / time_count[variant] : "NA";
     mean_gen = (gen_count[variant] > 0) ? gen_sum[variant] / gen_count[variant] : "NA";
-
-    if (len_count[variant] > 1) {
-      len_var = (len_sq_sum[variant] - ((len_sum[variant] * len_sum[variant]) / len_count[variant])) / (len_count[variant] - 1);
-      if (len_var < 0) len_var = 0;
-      len_stddev = sqrt(len_var);
-    } else {
-      len_stddev = "NA";
-    }
-
-    if (time_count[variant] > 1) {
-      time_var = (time_sq_sum[variant] - ((time_sum[variant] * time_sum[variant]) / time_count[variant])) / (time_count[variant] - 1);
-      if (time_var < 0) time_var = 0;
-      time_stddev = sqrt(time_var);
-    } else {
-      time_stddev = "NA";
-    }
-
-    best_len_out = (variant in best_len) ? best_len[variant] : "NA";
-    best_time_out = (variant in best_time) ? best_time[variant] : "NA";
-    best_tour_out = (variant in best_tour) ? best_tour[variant] : "NA";
-
-    print variant, version[variant], dataset[variant], runs[variant], ok[variant] + 0, hit_count[variant] + 0, best_len_out, best_time_out, best_tour_out, mean_len, len_stddev, mean_time, time_stddev, mean_gen;
+    print variant, version[variant], dataset[variant], target[variant], runs[variant], ok[variant] + 0, hit_count[variant] + 0, mean_len, mean_time, mean_gen;
   }
 }
 ' "$RUN_CSV" > "$AVG_CSV"
