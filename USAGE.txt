@@ -35,11 +35,18 @@ Global distance variant:
 
 Slurm sweep:
 
-   sbatch --export=ALL,DATASET=data/berlin52.tsp,TARGET_LENGTH=9400,RUNS=10 slurm/run_cuda_all_variants_csv.slurm
+   sbatch --export=ALL,DATASET=data/smoke20.tsp,TARGET_LENGTH=9400,RUNS=10 slurm/run_cuda_all_variants_csv.slurm
 
 
 Notes
 -----
 - data/berlin52.tsp is the default small benchmark input.
-- build/ is generated and ignored by Git.
-- slurm/run_cuda_all_variants_csv.slurm is the only retained Slurm entry point.
+
+Organization
+-----
+data contains the TSPLib instances for testing
+results contains CSV files from collected runs
+scripts contains the build script
+slurm contains the batch files
+src is split into CPP containing the parser for TSPLib and CUDA containing the GA basic and variant builds
+baselines and sequential implement serial CPU versions in C and Python
