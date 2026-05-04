@@ -1,35 +1,3 @@
-TSP-GA-CUDA compact usage
-=========================
-
-Purpose
--------
-This fork is a compact CUDA-focused version of the Traveling Salesman Problem
-genetic algorithm project. The root build now targets the CUDA implementations
-and optimization variants.
-
-Requirements
-------------
-- GNU Make
-- NVIDIA CUDA toolkit with nvcc
-- GCC or another host compiler compatible with nvcc
-
-Build
------
-From the repository root:
-
-    make all
-
-This writes CUDA binaries into:
-
-    build/
-
-The explicit CUDA target is:
-
-    make all_cuda_versions
-
-To clean generated binaries:
-
-    make clean
 
 HPC build helper
 ----------------
@@ -67,7 +35,8 @@ Global distance variant:
 
 Slurm sweep:
 
-    sbatch --export=ALL,DATASET=data/berlin52.tsp,RUNS=20 slurm/run_cuda_all_variants_csv.slurm
+   sbatch --export=ALL,DATASET=data/berlin52.tsp,TARGET_LENGTH=9400,RUNS=10 slurm/run_cuda_all_variants_csv.slurm
+
 
 Notes
 -----
